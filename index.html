@@ -563,11 +563,20 @@
           <button class="btn btn-sm" onclick="valorImprimir()"><i class="ti ti-file-type-pdf"></i> Imprimir</button>
         </div>
         <div class="metrics-grid3">
-          <div class="metric"><div class="metric-label">Valor total (s/IVA)</div><div class="metric-value green" id="valor-total">$0</div></div>
+          <div class="metric"><div class="metric-label" id="valor-total-lbl">Valor total (s/IVA)</div><div class="metric-value green" id="valor-total">$0</div></div>
           <div class="metric"><div class="metric-label">Unidades en stock</div><div class="metric-value" id="valor-unidades">0</div></div>
           <div class="metric"><div class="metric-label">Líneas</div><div class="metric-value" id="valor-lineas">0</div></div>
         </div>
-        <p style="font-size:11px;color:#999;margin:2px 0 0">Valor = stock × precio de lista de cada producto.</p>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:12px;flex-wrap:wrap">
+          <div class="sub-tabs" style="min-width:0;width:auto">
+            <button class="sub-tab active" id="valor-mon-ars" onclick="valorSetMoneda('ars')">Pesos</button>
+            <button class="sub-tab" id="valor-mon-usd" onclick="valorSetMoneda('usd')">Dólares</button>
+          </div>
+          <div id="valor-tc-wrap" style="display:none;flex:1;min-width:150px">
+            <input id="valor-tc" type="number" inputmode="decimal" placeholder="TC — $ por U$S 1" oninput="renderValorizacion()" style="margin:0" />
+          </div>
+        </div>
+        <p style="font-size:11px;color:#999;margin:8px 0 0" id="valor-nota">Valor = stock × precio de lista de cada producto.</p>
       </div>
 
       <div class="card">
@@ -1786,11 +1795,36 @@ function toggleValorLinea(linea) {
   if (valorExpandidas.has(linea)) valorExpandidas.delete(linea); else valorExpandidas.add(linea);
   renderValorizacion();
 }
+let valorMoneda = 'ars';
+function valorSetMoneda(m) {
+  valorMoneda = m;
+  $('valor-mon-ars').classList.toggle('active', m === 'ars');
+  $('valor-mon-usd').classList.toggle('active', m === 'usd');
+  $('valor-tc-wrap').style.display = m === 'usd' ? 'block' : 'none';
+  // pre-cargar el TC global (Costos) si el campo está vacío
+  if (m === 'usd' && !num($('valor-tc').value) && costosParams && costosParams.dolar) $('valor-tc').value = costosParams.dolar;
+  renderValorizacion();
+}
+function valorFmt() {
+  const tc = num($('valor-tc') && $('valor-tc').value);
+  const useUSD = valorMoneda === 'usd' && tc > 0;
+  const fmt = useUSD
+    ? n => 'US$ ' + Math.round((n || 0) / tc).toLocaleString('es-AR')
+    : n => money(n);
+  return { fmt, useUSD, tc };
+}
 function renderValorizacion() {
   const { lista, total, unidades } = valorData();
-  $('valor-total').textContent = money(total);
+  const { fmt, useUSD, tc } = valorFmt();
+  $('valor-total').textContent = fmt(total);
   $('valor-unidades').textContent = unidades.toLocaleString('es-AR');
   $('valor-lineas').textContent = lista.length;
+  $('valor-total-lbl').textContent = useUSD ? 'Valor total (US$)' : 'Valor total (s/IVA)';
+  $('valor-nota').textContent = (valorMoneda === 'usd' && !useUSD)
+    ? 'Ingresá el tipo de cambio para ver los valores en dólares.'
+    : useUSD
+      ? `Convertido a US$ 1 = ${money(tc)}. Valor = stock × precio de lista.`
+      : 'Valor = stock × precio de lista de cada producto.';
 
   if (!lista.length || total <= 0) {
     $('valor-chart').innerHTML = '<div class="empty">Sin datos de valorización</div>';
@@ -1821,7 +1855,7 @@ function renderValorizacion() {
     ${segs}
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="#fff" />
     <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="11" fill="#999">Total</text>
-    <text x="${cx}" y="${cy + 12}" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1a1a">${money(total)}</text>
+    <text x="${cx}" y="${cy + 12}" text-anchor="middle" font-size="13" font-weight="700" fill="#1a1a1a">${fmt(total)}</text>
   </svg>`;
   const leyenda = lista.map((x, i) => {
     const pct = total ? Math.round(x.monto / total * 100) : 0;
@@ -1830,7 +1864,7 @@ function renderValorizacion() {
       <span style="width:11px;height:11px;border-radius:3px;background:${color};flex-shrink:0"></span>
       <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.linea)}</span>
       <span style="color:#888">${pct}%</span>
-      <span style="font-weight:600;min-width:70px;text-align:right">${money(x.monto)}</span>
+      <span style="font-weight:600;min-width:70px;text-align:right">${fmt(x.monto)}</span>
     </div>`;
   }).join('');
   $('valor-chart').innerHTML = `<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:center">
@@ -1845,8 +1879,8 @@ function renderValorizacion() {
     const detalle = abierta ? `<div style="margin:8px 0 2px 18px;border-left:2px solid ${color};padding-left:10px">` +
       x.items.map(it => `<div style="display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:13px">
         <div style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.nombre)}</div>
-        <div style="color:#999;font-size:11px;flex-shrink:0">${it.stock.toLocaleString('es-AR')} × ${money(it.precio)}</div>
-        <div style="font-weight:600;min-width:75px;text-align:right;flex-shrink:0">${money(it.monto)}</div>
+        <div style="color:#999;font-size:11px;flex-shrink:0">${it.stock.toLocaleString('es-AR')} × ${fmt(it.precio)}</div>
+        <div style="font-weight:600;min-width:75px;text-align:right;flex-shrink:0">${fmt(it.monto)}</div>
       </div>`).join('') + `</div>` : '';
     return `<div class="valor-row" style="padding:9px 0;border-bottom:1px solid #f0f0f0">
       <div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none" onclick='toggleValorLinea(${JSON.stringify(x.linea)})'>
@@ -1857,7 +1891,7 @@ function renderValorizacion() {
           <div class="list-detail">${x.productos} modelo${x.productos !== 1 ? 's' : ''} · ${x.unidades.toLocaleString('es-AR')} u en stock</div>
         </div>
         <div style="text-align:right;flex-shrink:0">
-          <div style="font-weight:700">${money(x.monto)}</div>
+          <div style="font-weight:700">${fmt(x.monto)}</div>
           <div style="font-size:11px;color:#888">${pct.toFixed(1)}%</div>
         </div>
       </div>
@@ -1869,15 +1903,17 @@ function renderValorizacion() {
   }).join('');
   $('valor-lista').innerHTML = filas +
     `<div style="display:flex;justify-content:space-between;padding:11px 0 2px;font-weight:700;font-size:15px">
-      <span>Total valorizado</span><span>${money(total)}</span></div>`;
+      <span>Total valorizado</span><span>${fmt(total)}</span></div>`;
 }
 function valorImprimir() {
   const { lista, total, unidades } = valorData();
   if (!lista.length) { alert('No hay datos para imprimir.'); return; }
+  const { fmt, useUSD, tc } = valorFmt();
   const filas = lista.map(x => {
     const pct = total ? (x.monto / total * 100).toFixed(1) : '0';
-    return `<tr><td>${esc(x.linea)}</td><td style="text-align:right">${x.productos}</td><td style="text-align:right">${x.unidades.toLocaleString('es-AR')}</td><td style="text-align:right">${money(x.monto)}</td><td style="text-align:right">${pct}%</td></tr>`;
+    return `<tr><td>${esc(x.linea)}</td><td style="text-align:right">${x.productos}</td><td style="text-align:right">${x.unidades.toLocaleString('es-AR')}</td><td style="text-align:right">${fmt(x.monto)}</td><td style="text-align:right">${pct}%</td></tr>`;
   }).join('');
+  const moneda = useUSD ? `valores en dólares (US$ 1 = ${money(tc)})` : 'valor a precio de lista (sin IVA)';
   const w = window.open('', '_blank');
   w.document.write(`<html><head><title>Valorización de stock</title><meta charset="utf-8">
     <style>body{font-family:Arial,sans-serif;padding:24px;color:#222}h1{font-size:20px;margin:0 0 4px}
@@ -1885,10 +1921,10 @@ function valorImprimir() {
     th,td{padding:7px 8px;border-bottom:1px solid #ddd}th{text-align:right;background:#f5f5f5;font-size:11px;text-transform:uppercase;color:#666}
     th:first-child,td:first-child{text-align:left}tfoot td{font-weight:700;border-top:2px solid #333}</style></head>
     <body><h1>Valorización de stock — Modelar Moldes</h1>
-    <div class="sub">${fmtFecha(hoy())} · ${unidades.toLocaleString('es-AR')} unidades · ${lista.length} líneas · valor a precio de lista (sin IVA)</div>
+    <div class="sub">${fmtFecha(hoy())} · ${unidades.toLocaleString('es-AR')} unidades · ${lista.length} líneas · ${moneda}</div>
     <table><thead><tr><th>Línea</th><th>Modelos</th><th>Unidades</th><th>Monto</th><th>%</th></tr></thead>
     <tbody>${filas}</tbody>
-    <tfoot><tr><td>TOTAL</td><td style="text-align:right">${lista.reduce((a,x)=>a+x.productos,0)}</td><td style="text-align:right">${unidades.toLocaleString('es-AR')}</td><td style="text-align:right">${money(total)}</td><td style="text-align:right">100%</td></tr></tfoot>
+    <tfoot><tr><td>TOTAL</td><td style="text-align:right">${lista.reduce((a,x)=>a+x.productos,0)}</td><td style="text-align:right">${unidades.toLocaleString('es-AR')}</td><td style="text-align:right">${fmt(total)}</td><td style="text-align:right">100%</td></tr></tfoot>
     </table></body></html>`);
   w.document.close();
   w.focus();
