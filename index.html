@@ -396,6 +396,7 @@
       <button class="sub-tab" id="stab-stk-mp" onclick="showSub('stock','stk-mp')">Materias primas</button>
       <button class="sub-tab" id="stab-stk-ops" onclick="showSub('stock','stk-ops')">Órdenes producción</button>
       <button class="sub-tab" id="stab-stk-movs" onclick="showSub('stock','stk-movs')">Movimientos</button>
+      <button class="sub-tab" id="stab-stk-valor" onclick="showSub('stock','stk-valor')">Valorización</button>
     </div></div>
 
     <!-- Productos -->
@@ -551,6 +552,32 @@
           <input id="mov-buscar" placeholder="🔍 Filtrar por modelo…" oninput="renderMovimientos()" />
         </div>
         <div id="mov-lista" style="margin-top:8px"><div class="empty">Sin movimientos registrados</div></div>
+      </div>
+    </div>
+
+    <!-- Valorización -->
+    <div id="sub-stk-valor" class="sub-section">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Valorización de stock</div>
+          <button class="btn btn-sm" onclick="valorImprimir()"><i class="ti ti-file-type-pdf"></i> Imprimir</button>
+        </div>
+        <div class="metrics-grid3">
+          <div class="metric"><div class="metric-label">Valor total (s/IVA)</div><div class="metric-value green" id="valor-total">$0</div></div>
+          <div class="metric"><div class="metric-label">Unidades en stock</div><div class="metric-value" id="valor-unidades">0</div></div>
+          <div class="metric"><div class="metric-label">Líneas</div><div class="metric-value" id="valor-lineas">0</div></div>
+        </div>
+        <p style="font-size:11px;color:#999;margin:2px 0 0">Valor = stock × precio de lista de cada producto.</p>
+      </div>
+
+      <div class="card">
+        <div class="card-title" style="margin-bottom:10px">Monto por línea</div>
+        <div id="valor-chart"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title" style="margin-bottom:8px">Detalle por línea</div>
+        <div id="valor-lista"></div>
       </div>
     </div>
   </div>
@@ -880,7 +907,7 @@ function iniciarListeners() {
     productos = s.docs.map(d => ({ id: d.id, ...d.data() }));
     productos.sort((a, b) => (a.linea + a.nombre).localeCompare(b.linea + b.nombre, 'es'));
     $('card-seed').style.display = productos.length ? 'none' : 'block';
-    renderProductos(); renderSelectsProductos(); renderCostos();
+    renderProductos(); renderSelectsProductos(); renderCostos(); renderValorizacion();
   }));
   unsubs.push(db.collection('materiasPrimas').onSnapshot(s => {
     materiasPrimas = s.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -1733,6 +1760,123 @@ function barras(pares, fmt) {
       <div class="bar-track"><div class="bar-fill" style="width:${Math.round(val / max * 100)}%"></div></div>
       <div class="bar-val">${fmt(val)}</div>
     </div>`).join('');
+}
+
+// ══════════════════════ STOCK: VALORIZACIÓN ══════════════════════
+const VALOR_COLORES = ['#2563eb','#16a34a','#f59e0b','#dc2626','#7c3aed','#0891b2','#db2777','#65a30d','#ea580c','#4f46e5','#0d9488','#c026d3','#ca8a04','#e11d48','#059669','#9333ea'];
+function valorData() {
+  const porLinea = {};
+  productos.forEach(p => {
+    const l = p.linea || 'Sin línea';
+    const monto = (p.stock || 0) * (p.precio || 0);
+    if (!porLinea[l]) porLinea[l] = { linea: l, monto: 0, unidades: 0, productos: 0 };
+    porLinea[l].monto += monto;
+    porLinea[l].unidades += (p.stock || 0);
+    porLinea[l].productos += 1;
+  });
+  const lista = Object.values(porLinea).sort((a, b) => b.monto - a.monto);
+  const total = lista.reduce((a, x) => a + x.monto, 0);
+  const unidades = lista.reduce((a, x) => a + x.unidades, 0);
+  return { lista, total, unidades };
+}
+function renderValorizacion() {
+  const { lista, total, unidades } = valorData();
+  $('valor-total').textContent = money(total);
+  $('valor-unidades').textContent = unidades.toLocaleString('es-AR');
+  $('valor-lineas').textContent = lista.length;
+
+  if (!lista.length || total <= 0) {
+    $('valor-chart').innerHTML = '<div class="empty">Sin datos de valorización</div>';
+    $('valor-lista').innerHTML = '<div class="empty">Cargá stock y precios en Productos</div>';
+    return;
+  }
+
+  // ── Gráfico de torta (donut) SVG ──
+  const R = 80, r = 48, cx = 100, cy = 100;
+  let ang = -Math.PI / 2, segs = '';
+  lista.forEach((x, i) => {
+    const frac = x.monto / total;
+    if (frac <= 0) return;
+    const a2 = ang + frac * 2 * Math.PI;
+    const large = frac > 0.5 ? 1 : 0;
+    const x1 = cx + R * Math.cos(ang), y1 = cy + R * Math.sin(ang);
+    const x2 = cx + R * Math.cos(a2), y2 = cy + R * Math.sin(a2);
+    const color = VALOR_COLORES[i % VALOR_COLORES.length];
+    // segmento casi completo (una sola línea): dibujar círculo completo
+    if (frac > 0.999) {
+      segs += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="${color}" />`;
+    } else {
+      segs += `<path d="M${cx},${cy} L${x1.toFixed(2)},${y1.toFixed(2)} A${R},${R} 0 ${large} 1 ${x2.toFixed(2)},${y2.toFixed(2)} Z" fill="${color}" />`;
+    }
+    ang = a2;
+  });
+  const svg = `<svg viewBox="0 0 200 200" style="width:170px;height:170px;flex-shrink:0">
+    ${segs}
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="#fff" />
+    <text x="${cx}" y="${cy - 4}" text-anchor="middle" font-size="11" fill="#999">Total</text>
+    <text x="${cx}" y="${cy + 12}" text-anchor="middle" font-size="14" font-weight="700" fill="#1a1a1a">${money(total)}</text>
+  </svg>`;
+  const leyenda = lista.map((x, i) => {
+    const pct = total ? Math.round(x.monto / total * 100) : 0;
+    const color = VALOR_COLORES[i % VALOR_COLORES.length];
+    return `<div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 0">
+      <span style="width:11px;height:11px;border-radius:3px;background:${color};flex-shrink:0"></span>
+      <span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(x.linea)}</span>
+      <span style="color:#888">${pct}%</span>
+      <span style="font-weight:600;min-width:70px;text-align:right">${money(x.monto)}</span>
+    </div>`;
+  }).join('');
+  $('valor-chart').innerHTML = `<div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:center">
+    ${svg}<div style="flex:1;min-width:200px">${leyenda}</div></div>`;
+
+  // ── Lista / tabla detalle ──
+  const maxMonto = Math.max(...lista.map(x => x.monto), 1);
+  const filas = lista.map((x, i) => {
+    const pct = total ? (x.monto / total * 100) : 0;
+    const color = VALOR_COLORES[i % VALOR_COLORES.length];
+    return `<div class="valor-row" style="padding:9px 0;border-bottom:1px solid #f0f0f0">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="width:10px;height:10px;border-radius:3px;background:${color};flex-shrink:0"></span>
+        <div style="flex:1;min-width:0">
+          <div class="list-name">${esc(x.linea)}</div>
+          <div class="list-detail">${x.productos} modelo${x.productos !== 1 ? 's' : ''} · ${x.unidades.toLocaleString('es-AR')} u en stock</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="font-weight:700">${money(x.monto)}</div>
+          <div style="font-size:11px;color:#888">${pct.toFixed(1)}%</div>
+        </div>
+      </div>
+      <div style="height:5px;background:#f0f0f0;border-radius:3px;margin-top:6px;overflow:hidden">
+        <div style="height:100%;width:${(x.monto / maxMonto * 100).toFixed(1)}%;background:${color}"></div>
+      </div>
+    </div>`;
+  }).join('');
+  $('valor-lista').innerHTML = filas +
+    `<div style="display:flex;justify-content:space-between;padding:11px 0 2px;font-weight:700;font-size:15px">
+      <span>Total valorizado</span><span>${money(total)}</span></div>`;
+}
+function valorImprimir() {
+  const { lista, total, unidades } = valorData();
+  if (!lista.length) { alert('No hay datos para imprimir.'); return; }
+  const filas = lista.map(x => {
+    const pct = total ? (x.monto / total * 100).toFixed(1) : '0';
+    return `<tr><td>${esc(x.linea)}</td><td style="text-align:right">${x.productos}</td><td style="text-align:right">${x.unidades.toLocaleString('es-AR')}</td><td style="text-align:right">${money(x.monto)}</td><td style="text-align:right">${pct}%</td></tr>`;
+  }).join('');
+  const w = window.open('', '_blank');
+  w.document.write(`<html><head><title>Valorización de stock</title><meta charset="utf-8">
+    <style>body{font-family:Arial,sans-serif;padding:24px;color:#222}h1{font-size:20px;margin:0 0 4px}
+    .sub{color:#666;font-size:13px;margin-bottom:16px}table{width:100%;border-collapse:collapse;font-size:13px}
+    th,td{padding:7px 8px;border-bottom:1px solid #ddd}th{text-align:right;background:#f5f5f5;font-size:11px;text-transform:uppercase;color:#666}
+    th:first-child,td:first-child{text-align:left}tfoot td{font-weight:700;border-top:2px solid #333}</style></head>
+    <body><h1>Valorización de stock — Modelar Moldes</h1>
+    <div class="sub">${fmtFecha(hoy())} · ${unidades.toLocaleString('es-AR')} unidades · ${lista.length} líneas · valor a precio de lista (sin IVA)</div>
+    <table><thead><tr><th>Línea</th><th>Modelos</th><th>Unidades</th><th>Monto</th><th>%</th></tr></thead>
+    <tbody>${filas}</tbody>
+    <tfoot><tr><td>TOTAL</td><td style="text-align:right">${lista.reduce((a,x)=>a+x.productos,0)}</td><td style="text-align:right">${unidades.toLocaleString('es-AR')}</td><td style="text-align:right">${money(total)}</td><td style="text-align:right">100%</td></tr></tfoot>
+    </table></body></html>`);
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 300);
 }
 
 // ══════════════════════ STOCK: PRODUCTOS ══════════════════════
