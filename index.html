@@ -1769,15 +1769,22 @@ function valorData() {
   productos.forEach(p => {
     const l = p.linea || 'Sin línea';
     const monto = (p.stock || 0) * (p.precio || 0);
-    if (!porLinea[l]) porLinea[l] = { linea: l, monto: 0, unidades: 0, productos: 0 };
+    if (!porLinea[l]) porLinea[l] = { linea: l, monto: 0, unidades: 0, productos: 0, items: [] };
     porLinea[l].monto += monto;
     porLinea[l].unidades += (p.stock || 0);
     porLinea[l].productos += 1;
+    porLinea[l].items.push({ nombre: p.nombre, stock: p.stock || 0, precio: p.precio || 0, monto });
   });
   const lista = Object.values(porLinea).sort((a, b) => b.monto - a.monto);
+  lista.forEach(x => x.items.sort((a, b) => b.monto - a.monto));
   const total = lista.reduce((a, x) => a + x.monto, 0);
   const unidades = lista.reduce((a, x) => a + x.unidades, 0);
   return { lista, total, unidades };
+}
+let valorExpandidas = new Set();
+function toggleValorLinea(linea) {
+  if (valorExpandidas.has(linea)) valorExpandidas.delete(linea); else valorExpandidas.add(linea);
+  renderValorizacion();
 }
 function renderValorizacion() {
   const { lista, total, unidades } = valorData();
@@ -1834,8 +1841,16 @@ function renderValorizacion() {
   const filas = lista.map((x, i) => {
     const pct = total ? (x.monto / total * 100) : 0;
     const color = VALOR_COLORES[i % VALOR_COLORES.length];
+    const abierta = valorExpandidas.has(x.linea);
+    const detalle = abierta ? `<div style="margin:8px 0 2px 18px;border-left:2px solid ${color};padding-left:10px">` +
+      x.items.map(it => `<div style="display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:13px">
+        <div style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(it.nombre)}</div>
+        <div style="color:#999;font-size:11px;flex-shrink:0">${it.stock.toLocaleString('es-AR')} × ${money(it.precio)}</div>
+        <div style="font-weight:600;min-width:75px;text-align:right;flex-shrink:0">${money(it.monto)}</div>
+      </div>`).join('') + `</div>` : '';
     return `<div class="valor-row" style="padding:9px 0;border-bottom:1px solid #f0f0f0">
-      <div style="display:flex;align-items:center;gap:8px">
+      <div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none" onclick='toggleValorLinea(${JSON.stringify(x.linea)})'>
+        <i class="ti ti-chevron-${abierta ? 'down' : 'right'}" style="color:#bbb;flex-shrink:0"></i>
         <span style="width:10px;height:10px;border-radius:3px;background:${color};flex-shrink:0"></span>
         <div style="flex:1;min-width:0">
           <div class="list-name">${esc(x.linea)}</div>
@@ -1849,6 +1864,7 @@ function renderValorizacion() {
       <div style="height:5px;background:#f0f0f0;border-radius:3px;margin-top:6px;overflow:hidden">
         <div style="height:100%;width:${(x.monto / maxMonto * 100).toFixed(1)}%;background:${color}"></div>
       </div>
+      ${detalle}
     </div>`;
   }).join('');
   $('valor-lista').innerHTML = filas +
