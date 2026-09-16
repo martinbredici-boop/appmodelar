@@ -1449,7 +1449,7 @@ function renderHistorial() {
         <button class="btn btn-sm btn-edit" onclick='reimprimirPedido("${p.id}")' title="Remito"><i class="ti ti-printer"></i></button>
         <button class="btn btn-sm btn-edit" onclick='imprimirEtiqueta("${p.id}")' title="Etiqueta de envío"><i class="ti ti-tag"></i></button>
         ${p.estado !== 'anulado' && !p.stockDescontado ? `<button class="btn btn-sm btn-green" onclick='pedDescontarStock("${p.id}")' title="Descontar del stock ahora"><i class="ti ti-package-export"></i></button>` : ''}
-        ${p.estado !== 'anulado' ? `<button class="btn btn-sm btn-danger" onclick='anularPedido("${p.id}")'><i class="ti ti-ban"></i></button>` : ''}
+        ${p.estado !== 'anulado' ? `<button class="btn btn-sm btn-danger" onclick='anularPedido("${p.id}")' title="Eliminar pedido"><i class="ti ti-trash"></i></button>` : ''}
       </div>
       <div id="ped-det-${p.id}" class="detalle-box" style="display:none;width:100%">
         ${(p.items || []).map(it => `<div>${it.cant} × ${esc(it.nombre)} — ${monPed(p, it.cant * it.precio)}</div>`).join('')}
@@ -1541,7 +1541,7 @@ async function pedDescontarStock(id) {
 async function anularPedido(id) {
   const p = pedidos.find(x => x.id === id);
   if (!p) return;
-  if (!confirm('¿Anular el pedido de ' + p.cliente + '? ' + (p.stockDescontado ? 'El stock se repone.' : ''))) return;
+  if (!confirm('¿Eliminar el pedido de ' + p.cliente + '? ' + (p.stockDescontado ? 'El stock se repone. ' : '') + 'Esta acción no se puede deshacer.')) return;
   if (p.stockDescontado) {
     const batch = db.batch();
     (p.items || []).forEach(it => {
@@ -1549,9 +1549,9 @@ async function anularPedido(id) {
       if (pr) batch.update(db.collection('productos').doc(pr.id), { stock: (pr.stock || 0) + it.cant });
     });
     await batch.commit();
-    await logMovimiento('anulacion', 'Anulación pedido ' + p.cliente + ' · Remito ' + remitoNum(p.numero), (p.items || []).map(it => ({ productoId: it.productoId, nombre: it.nombre, cant: it.cant })));
+    await logMovimiento('eliminacion', 'Eliminación pedido ' + p.cliente + ' · Remito ' + remitoNum(p.numero), (p.items || []).map(it => ({ productoId: it.productoId, nombre: it.nombre, cant: it.cant })));
   }
-  await db.collection('pedidos').doc(id).update({ estado: 'anulado' });
+  await db.collection('pedidos').doc(id).delete();
 }
 
 // ── Remito PDF ──
