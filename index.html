@@ -1436,18 +1436,34 @@ async function pedGuardar(conRemito) {
 function monPed(p, n) { return (p.moneda === 'USD' ? 'U$S ' : '$') + Math.round(n || 0).toLocaleString('es-AR'); }
 // total del pedido expresado siempre en pesos (para historial y análisis)
 function pedTotalARS(p) { return p.totalARS != null ? p.totalARS : (p.total || 0); }
+function pedCobrado(p) { return p.cobradoARS || 0; }
+function pedSaldo(p) { return Math.max(0, Math.round(pedTotalARS(p) - pedCobrado(p))); }
+function pedPagoBadge(p) {
+  if (p.estado === 'anulado') return '';
+  const saldo = pedSaldo(p);
+  if (pedCobrado(p) <= 0) return `<span class="badge badge-low">A cobrar ${money(saldo)}</span>`;
+  if (saldo <= 0) return '<span class="badge badge-ok">Pagado</span>';
+  return `<span class="badge badge-pend">Saldo ${money(saldo)}</span>`;
+}
+function parsePesos(txt) {
+  const s = String(txt == null ? '' : txt).replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(',', '.');
+  const n = parseFloat(s); return isNaN(n) ? 0 : n;
+}
 function renderHistorial() {
   $('ped-hist-count').textContent = pedidos.length + ' pedidos';
   $('ped-hist-lista').innerHTML = pedidos.length ? pedidos.map(p => `
     <div class="prod-row" style="flex-wrap:wrap">
       <div style="flex:1;min-width:150px;cursor:pointer" onclick="toggle('ped-det-${p.id}')">
-        <div class="list-name">${p.clienteNumero ? '<span class="badge" style="margin-right:4px">' + cliNumFmt(p.clienteNumero) + '</span>' : ''}${esc(p.cliente)} ${p.moneda === 'USD' ? '<span class="badge badge-pend">U$S</span>' : ''} ${p.estado === 'anulado' ? '<span class="badge badge-anulado">Anulado</span>' : ''} ${p.estado !== 'anulado' && !p.stockDescontado ? '<span class="badge badge-warn">Sin descontar stock</span>' : ''}</div>
+        <div class="list-name">${p.clienteNumero ? '<span class="badge" style="margin-right:4px">' + cliNumFmt(p.clienteNumero) + '</span>' : ''}${esc(p.cliente)} ${p.moneda === 'USD' ? '<span class="badge badge-pend">U$S</span>' : ''} ${p.estado === 'anulado' ? '<span class="badge badge-anulado">Anulado</span>' : ''} ${p.estado !== 'anulado' && !p.stockDescontado ? '<span class="badge badge-warn">Sin descontar stock</span>' : ''} ${pedPagoBadge(p)}</div>
         <div class="list-detail">Remito ${remitoNum(p.numero)} · ${fmtFecha(p.fecha)} · <b>${money(pedTotalARS(p))}</b>${p.moneda === 'USD' ? ' <span style="color:#999">(' + monPed(p, p.total) + ' × TC $' + (p.tc || 0).toLocaleString('es-AR') + ')</span>' : ''}${p.stockDescontadoFecha ? ' · stock desc. ' + fmtFecha(p.stockDescontadoFecha) : ''}</div>
       </div>
       <div class="item-actions">
         ${p.estado !== 'anulado' ? `<button class="btn btn-sm btn-edit" onclick='pedEditar("${p.id}")' title="Editar pedido"><i class="ti ti-pencil"></i></button>` : ''}
         <button class="btn btn-sm btn-edit" onclick='reimprimirPedido("${p.id}")' title="Remito"><i class="ti ti-printer"></i></button>
         <button class="btn btn-sm btn-edit" onclick='imprimirEtiqueta("${p.id}")' title="Etiqueta de envío"><i class="ti ti-tag"></i></button>
+        ${p.estado !== 'anulado' && pedSaldo(p) > 0 ? `<button class="btn btn-sm btn-edit" onclick='pedRegistrarPago("${p.id}")' title="Registrar pago a cuenta"><i class="ti ti-cash"></i></button>` : ''}
+        ${p.estado !== 'anulado' && pedSaldo(p) > 0 ? `<button class="btn btn-sm btn-green" onclick='pedMarcarPagado("${p.id}")' title="Marcar como PAGADO"><i class="ti ti-check"></i></button>` : ''}
+        ${p.estado !== 'anulado' && pedCobrado(p) > 0 ? `<button class="btn btn-sm btn-edit" onclick='pedDeshacerPago("${p.id}")' title="Deshacer cobro"><i class="ti ti-rotate-2"></i></button>` : ''}
         ${p.estado !== 'anulado' && !p.stockDescontado ? `<button class="btn btn-sm btn-green" onclick='pedDescontarStock("${p.id}")' title="Descontar del stock ahora"><i class="ti ti-package-export"></i></button>` : ''}
         ${p.estado !== 'anulado' ? `<button class="btn btn-sm btn-danger" onclick='anularPedido("${p.id}")' title="Eliminar pedido"><i class="ti ti-trash"></i></button>` : ''}
       </div>
@@ -1459,12 +1475,33 @@ function renderHistorial() {
         ${p.moneda === 'USD' ? `<div><b>Total U$S ${(p.total || 0).toLocaleString('es-AR')} × TC $${(p.tc || 0).toLocaleString('es-AR')} = ${money(pedTotalARS(p))}</b></div>` : ''}
         ${p.domicilio ? `<div>📍 ${esc(p.domicilio)}</div>` : ''}
         ${p.transporte ? `<div>🚚 ${esc(p.transporte)}</div>` : ''}
+        ${p.estado !== 'anulado' ? `<div style="margin-top:4px">💰 Cobrado: <b>${money(pedCobrado(p))}</b> · Saldo por cobrar: <b style="color:${pedSaldo(p) > 0 ? '#dc2626' : '#15803d'}">${money(pedSaldo(p))}</b>${p.cobradoFecha ? ' · último cobro ' + fmtFecha(p.cobradoFecha) : ''}</div>` : ''}
       </div>
     </div>`).join('') : '<div class="empty">Sin pedidos todavía</div>';
 }
 function reimprimirPedido(id) {
   const p = pedidos.find(x => x.id === id);
   if (p) imprimirRemito(p);
+}
+async function pedRegistrarPago(id) {
+  const p = pedidos.find(x => x.id === id); if (!p) return;
+  const saldo = pedSaldo(p);
+  const txt = prompt('Pago a cuenta de ' + p.cliente + '.\nSaldo por cobrar: ' + money(saldo) + '\n\nMonto que paga ahora:', '');
+  if (txt == null) return;
+  const monto = parsePesos(txt);
+  if (monto <= 0) { alert('Ingresá un monto válido.'); return; }
+  const cob = Math.min(pedTotalARS(p), pedCobrado(p) + monto);
+  await db.collection('pedidos').doc(id).update({ cobradoARS: cob, cobradoFecha: hoy() });
+}
+async function pedMarcarPagado(id) {
+  const p = pedidos.find(x => x.id === id); if (!p) return;
+  if (!confirm('¿Marcar el pedido de ' + p.cliente + ' como PAGADO por ' + money(pedTotalARS(p)) + '?')) return;
+  await db.collection('pedidos').doc(id).update({ cobradoARS: pedTotalARS(p), cobradoFecha: hoy() });
+}
+async function pedDeshacerPago(id) {
+  const p = pedidos.find(x => x.id === id); if (!p) return;
+  if (!confirm('¿Deshacer los cobros registrados de este pedido? Quedará con el saldo completo por cobrar.')) return;
+  await db.collection('pedidos').doc(id).update({ cobradoARS: 0, cobradoFecha: null });
 }
 // ── Etiqueta de envío (4 por hoja A4) ──
 function imprimirEtiqueta(id) {
