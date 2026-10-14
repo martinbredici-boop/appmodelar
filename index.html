@@ -500,9 +500,10 @@
       <div class="card">
         <div class="card-header">
           <div class="card-title">Nueva orden de producción</div>
-          <button class="btn btn-sm" onclick="toggle('op-form')"><i class="ti ti-plus"></i> Nueva</button>
+          <button class="btn btn-sm" onclick="opNueva()"><i class="ti ti-plus"></i> Nueva</button>
         </div>
         <div id="op-form" style="display:none">
+          <div id="op-editing-banner" class="editing-banner" style="display:none"><span>Editando <b id="op-editing-num"></b></span><button class="btn btn-sm" onclick="opCancelar()">Cancelar</button></div>
           <div class="row">
             <div><label>Proveedor / inyector</label><input id="op-proveedor" value="FAL Autopartes" list="op-prov-list" /><datalist id="op-prov-list"><option>FAL Autopartes</option><option>MOPLAST</option><option>LANIK</option></datalist></div>
             <div><label>Fecha</label><input id="op-fecha" type="date" /></div>
@@ -752,7 +753,7 @@ const ALLOWED_EMAILS = ['martin.bredici@gmail.com', 'sofia.bredici@gmail.com', '
 let productos = [], materiasPrimas = [], pedidos = [], ingresos = [], ops = [], clientes = [], movimientos = [];
 let costosParams = null;
 let pedItems = [], ingItems = [], opItems = [];
-let prodEditandoId = null, mpEditandoId = null, cliEditandoId = null, pedEditandoId = null;
+let prodEditandoId = null, mpEditandoId = null, cliEditandoId = null, pedEditandoId = null, opEditandoId = null;
 let unsubs = [];
 
 const DEFAULT_PARAMS = {
@@ -2209,8 +2210,53 @@ function renderOpItems() {
   $('op-tot-kg').textContent = kg.toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' kg';
   $('op-tot-plata').textContent = money(plata);
 }
+function opLimpiar() {
+  opItems = []; renderOpItems();
+  opEditandoId = null;
+  $('op-editing-banner').style.display = 'none';
+  $('op-fecha').value = ''; $('op-proveedor').value = 'FAL Autopartes';
+  $('op-material').value = 'ABS'; $('op-valor-def').value = '';
+}
+function opNueva() {
+  if (opEditandoId) opLimpiar();
+  toggle('op-form');
+}
+function opCancelar() { opLimpiar(); $('op-form').style.display = 'none'; }
+function opEditar(id) {
+  const o = ops.find(x => x.id === id);
+  if (!o || o.estado === 'recibida') return;
+  opEditandoId = id;
+  $('op-editing-banner').style.display = 'flex';
+  $('op-editing-num').textContent = 'OP #' + (o.numero || '—') + ' — ' + (o.proveedor || '');
+  $('op-fecha').value = o.fecha || '';
+  $('op-proveedor').value = o.proveedor || '';
+  $('op-material').value = o.material || 'ABS';
+  $('op-valor-def').value = '';
+  opItems = (o.items || []).map(it => ({ ...it }));
+  renderOpItems();
+  $('op-form').style.display = 'block';
+  $('op-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 async function opGuardar(imprimir) {
   if (!opItems.length) return alert('Agregá al menos un modelo.');
+  if (opEditandoId) {
+    const orig = ops.find(x => x.id === opEditandoId);
+    if (!orig || orig.estado === 'recibida') { opCancelar(); return alert('Esta OP ya fue recibida y no se puede editar.'); }
+    const cambios = {
+      fecha: $('op-fecha').value || orig.fecha || hoy(),
+      proveedor: $('op-proveedor').value.trim() || 'FAL Autopartes',
+      material: $('op-material').value,
+      items: opItems,
+      totalUnid: opItems.reduce((a, i) => a + i.cant, 0),
+      totalKg: opItems.reduce((a, i) => a + i.cant * i.peso, 0),
+      total: opItems.reduce((a, i) => a + i.cant * i.valor, 0),
+      editado: new Date().toISOString()
+    };
+    await db.collection('ops').doc(opEditandoId).update(cambios);
+    if (imprimir) imprimirOP({ ...orig, ...cambios });
+    opCancelar();
+    return;
+  }
   const numero = await db.runTransaction(async tx => {
     const ref = db.collection('config').doc('counters');
     const snap = await tx.get(ref);
@@ -2245,7 +2291,8 @@ function renderOPs() {
       </div>
       <div class="item-actions">
         <button class="btn btn-sm btn-edit" onclick='reimprimirOP("${o.id}")'><i class="ti ti-printer"></i></button>
-        ${o.estado !== 'recibida' ? `<button class="btn btn-sm btn-green" onclick='opRecibir("${o.id}")' title="Registrar ingreso a stock"><i class="ti ti-package-import"></i></button>
+        ${o.estado !== 'recibida' ? `<button class="btn btn-sm btn-edit" onclick='opEditar("${o.id}")' title="Editar OP"><i class="ti ti-pencil"></i></button>
+        <button class="btn btn-sm btn-green" onclick='opRecibir("${o.id}")' title="Registrar ingreso a stock"><i class="ti ti-package-import"></i></button>
         <button class="btn btn-sm btn-danger" onclick='opBorrar("${o.id}")'><i class="ti ti-trash"></i></button>` : ''}
       </div>
       <div id="op-det-${o.id}" class="detalle-box" style="display:none;width:100%">
