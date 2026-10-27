@@ -254,6 +254,7 @@ function render() {
     (lineaActiva === 'Todos' || lineaDe(p) === lineaActiva) &&
     (!q || normNombre(p.nombre + ' ' + (p.sku || '') + ' ' + (p.descripcion || '')).includes(q))
   );
+  if (!productos.length) { $('grid').innerHTML = '<div class="estado">Estamos cargando el catálogo. Escribinos por WhatsApp y te pasamos la lista de precios.</div>'; return; }
   if (!lista.length) { $('grid').innerHTML = '<div class="estado">No encontramos productos con ese filtro.</div>'; return; }
   $('grid').innerHTML = lista.map(p => {
     const cant = carrito[p.id] || 0;
