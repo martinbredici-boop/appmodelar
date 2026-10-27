@@ -223,7 +223,7 @@ async function cargarProductos() {
     const snap = await db.collection('tiendas').doc(EMPRESA_ID).collection('productos').get();
     productos = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(p => p.web !== false && p.nombre)
+      .filter(p => p.web !== false && p.nombre && p.precio_m2 > 0)
       .sort((a, b) => (a.sku || a.nombre).localeCompare(b.sku || b.nombre, 'es', { numeric: true }));
     // Descarta del carrito productos que ya no existen
     Object.keys(carrito).forEach(id => { if (!prodById(id)) delete carrito[id]; });
